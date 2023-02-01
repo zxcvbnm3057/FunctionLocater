@@ -1,0 +1,3 @@
+[submodule "LengthDisasm"]
+	path = LengthDisasm
+	url = https://github.com/zxcvbnm3057/LengthDisasm
