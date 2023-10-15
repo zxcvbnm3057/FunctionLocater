@@ -192,8 +192,11 @@ void FunctionLocater::MatchFunctions(std::unordered_map<uint8_t *, std::unordere
 
 int FunctionLocater::LCS(const uint8_t *x, int xlen, const uint8_t *y, int ylen)
 {
-    int opt[xlen + 1][ylen + 1];
-    memset(&opt, 0, sizeof(opt));
+    int **opt = (int **)calloc(xlen, sizeof(int *));
+    for (int i = 0; i < xlen; i++)
+    {
+        *(opt + i) = (int *)calloc(ylen, sizeof(int));
+    }
 
     for (int i = 1; i <= xlen; i++)
     {
@@ -206,37 +209,53 @@ int FunctionLocater::LCS(const uint8_t *x, int xlen, const uint8_t *y, int ylen)
         }
     }
 
-    return opt[xlen][ylen];
+    int result = opt[xlen - 1][ylen - 1];
+    for (int i = 0; i < xlen; i++)
+        free(*(opt + i));
+    free(opt);
+    return result;
 }
 
 int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_list<Sign> *B)
 {
-    int opt[std::distance(A->begin(), A->end()) + 1][std::distance(B->begin(), B->end()) + 1];
-    memset(&opt, 0, sizeof(opt));
-
-    int i = 1;
-    for (auto x_it = A->begin(); x_it != A->end(); x_it++)
+    int xlen = std::distance(A->begin(), A->end()) + 1;
+    int ylen = std::distance(B->begin(), B->end()) + 1;
+    int **opt = (int **)calloc(xlen, sizeof(int *));
+    for (int i = 0; i < xlen; i++)
     {
-        int j = 1;
-        for (auto y_it = B->begin(); y_it != B->end(); y_it++)
-        {
-            switch (x_it->type & y_it->type)
-            {
-            case STATEMENT:
-                opt[i][j] = std::max({opt[i - 1][j], opt[i][j - 1], opt[i - 1][j - 1] + LCS((uint8_t *)x_it->p, x_it->length, (uint8_t *)y_it->p, y_it->length)});
-                break;
-            case FUNCTION:
-                opt[i][j] = std::max({opt[i - 1][j], opt[i][j - 1], opt[i - 1][j - 1] + GetSignatureLCS((std::forward_list<Sign> *)x_it->p, (std::forward_list<Sign> *)y_it->p)});
-                break;
-            default:
-                opt[i][j] = opt[i - 1][j] > opt[i][j - 1] ? opt[i - 1][j] : opt[i][j - 1];
-            }
-            j++;
-        }
-        i++;
+        *(opt + i) = (int *)calloc(ylen, sizeof(int));
     }
 
-    return opt[std::distance(A->begin(), A->end())][std::distance(B->begin(), B->end())];
+    {
+        int i = 1;
+        for (auto x_it = A->begin(); x_it != A->end(); x_it++)
+        {
+            int j = 1;
+            for (auto y_it = B->begin(); y_it != B->end(); y_it++)
+            {
+                switch (x_it->type & y_it->type)
+                {
+                case STATEMENT:
+                    opt[i][j] = std::max({opt[i - 1][j], opt[i][j - 1], opt[i - 1][j - 1] + LCS((uint8_t *)x_it->p, x_it->length, (uint8_t *)y_it->p, y_it->length)});
+                    break;
+                case FUNCTION:
+                    opt[i][j] = std::max({opt[i - 1][j], opt[i][j - 1], opt[i - 1][j - 1] + GetSignatureLCS((std::forward_list<Sign> *)x_it->p, (std::forward_list<Sign> *)y_it->p)});
+                    break;
+                default:
+                    opt[i][j] = opt[i - 1][j] > opt[i][j - 1] ? opt[i - 1][j] : opt[i][j - 1];
+                }
+                j++;
+            }
+            i++;
+        }
+    }
+
+    int result = opt[xlen - 1][ylen - 1];
+    for (int i = 0; i < xlen; i++)
+        free(*(opt + i));
+    free(opt);
+
+    return result;
 }
 
 void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count)
@@ -345,6 +364,7 @@ void FunctionLocater::GetFunctionEntry(std::unordered_set<uint8_t *> &entry_list
     }
 }
 
+#ifdef __linux__
 void FunctionLocater::GetSectionArea(char *file_path, SectionArea *text, SectionArea *rodata, uint64_t offset)
 {
     FILE *fp;
@@ -381,3 +401,37 @@ void FunctionLocater::GetSectionArea(char *file_path, SectionArea *text, Section
     }
     fclose(fp);
 }
+#elif _WIN64
+void FunctionLocater::GetSectionArea(char *file_path, SectionArea *text, SectionArea *rodata, uint64_t offset) // hModule is the handle to a loaded Module (.exe or .dll)
+{
+    // get the location of the module's IMAGE_NT_HEADERS structure
+    IMAGE_NT_HEADERS *pNtHdr = ::ImageNtHeader(file_path);
+
+    // section table immediately follows the IMAGE_NT_HEADERS
+    IMAGE_SECTION_HEADER *pSectionHdr = (IMAGE_SECTION_HEADER *)(pNtHdr + 1);
+
+    const char *imageBase = (const char *)file_path;
+    char scnName[sizeof(pSectionHdr->Name) + 1];
+    scnName[sizeof(scnName) - 1] = '\0'; // enforce nul-termination for scn names that are the whole length of pSectionHdr->Name[]
+
+    for (int scn = 0; scn < pNtHdr->FileHeader.NumberOfSections; ++scn)
+    {
+        // Note: pSectionHdr->Name[] is 8 bytes long. If the scn name is 8 bytes long, ->Name[] will
+        // not be nul-terminated. For this reason, copy it to a local buffer that's nul-terminated
+        // to be sure we only print the real scn name, and no extra garbage beyond it.
+        strncpy(scnName, (const char *)pSectionHdr->Name, sizeof(pSectionHdr->Name));
+
+        if (strcmp(scnName, ".text") == 0 && text != nullptr)
+        {
+            text->start = (uint8_t *)(file_path + pSectionHdr->VirtualAddress);
+            text->end = (uint8_t *)(imageBase + pSectionHdr->VirtualAddress + pSectionHdr->Misc.VirtualSize);
+        }
+        else if (strcmp(scnName, ".data") == 0 && rodata != nullptr)
+        {
+            rodata->start = (uint8_t *)(file_path + pSectionHdr->VirtualAddress);
+            rodata->end = (uint8_t *)(imageBase + pSectionHdr->VirtualAddress + pSectionHdr->Misc.VirtualSize);
+        }
+        ++pSectionHdr;
+    }
+}
+#endif

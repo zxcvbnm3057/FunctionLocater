@@ -20,11 +20,19 @@
  *  IN THE SOFTWARE.
  */
 
-#include <elf.h>
 #include <forward_list>
 #include <unordered_set>
 #include <unordered_map>
 #include <utility>
+
+#ifdef _WIN64
+#include <string>
+#define NOMINMAX
+#include <Windows.h>
+#include <DbgHelp.h>
+#elif __linux__
+#include <elf.h>
+#endif
 
 #include "LengthDisasm/LengthDisasm.h"
 
