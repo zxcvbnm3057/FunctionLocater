@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.10)
 project(FunctionLocater)
 
 set(SOURCES
+        jpt.hpp
         FunctionLocater.cpp
         FunctionLocater.hpp
         LengthDisasm/LengthDisasm.c

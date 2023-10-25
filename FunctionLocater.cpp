@@ -25,8 +25,33 @@
 #include <forward_list>
 #include <limits.h>
 #include <unordered_map>
+#include <iostream>
+#include <queue>
+#include <cassert>
 
 #include "FunctionLocater.hpp";
+
+int FunctionLocater::func_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
+int FunctionLocater::instr_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
+
+#ifdef _WIN64
+
+uint64_t JPT_Locater::ds;
+JPT_Locater FunctionLocater::jpt_locater;
+
+bool is_msvc_debug_align(uint8_t *p)
+{
+    for (; (uint64_t)p % 0x10 != 0; p++)
+    {
+        if (*p != 0xcc)
+        {
+            return false;
+        }
+    }
+    return (uint64_t)p % 16 != 0;
+}
+
+#endif // _WIN64
 
 void FunctionLocater::getTargetAddress(TLengthDisasm instr, uint8_t *address, uint64_t &target, bool &skip_below)
 {
@@ -192,39 +217,27 @@ void FunctionLocater::MatchFunctions(std::unordered_map<uint8_t *, std::unordere
 
 int FunctionLocater::LCS(const uint8_t *x, int xlen, const uint8_t *y, int ylen)
 {
-    int **opt = (int **)calloc(xlen, sizeof(int *));
-    for (int i = 0; i < xlen; i++)
-    {
-        *(opt + i) = (int *)calloc(ylen, sizeof(int));
-    }
+    memset(&instr_common_length, 0, sizeof(instr_common_length));
 
     for (int i = 1; i <= xlen; i++)
     {
         for (int j = 1; j <= ylen; j++)
         {
             if (x[i - 1] == y[j - 1])
-                opt[i][j] = opt[i - 1][j - 1] + 1;
+                instr_common_length[i][j] = instr_common_length[i - 1][j - 1] + 1;
             else
-                opt[i][j] = opt[i - 1][j] > opt[i][j - 1] ? opt[i - 1][j] : opt[i][j - 1];
+                instr_common_length[i][j] = instr_common_length[i - 1][j] > instr_common_length[i][j - 1] ? instr_common_length[i - 1][j] : instr_common_length[i][j - 1];
         }
     }
 
-    int result = opt[xlen - 1][ylen - 1];
-    for (int i = 0; i < xlen; i++)
-        free(*(opt + i));
-    free(opt);
-    return result;
+    return instr_common_length[xlen - 1][ylen - 1];
 }
 
 int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_list<Sign> *B)
 {
     int xlen = std::distance(A->begin(), A->end()) + 1;
     int ylen = std::distance(B->begin(), B->end()) + 1;
-    int **opt = (int **)calloc(xlen, sizeof(int *));
-    for (int i = 0; i < xlen; i++)
-    {
-        *(opt + i) = (int *)calloc(ylen, sizeof(int));
-    }
+    memset(&func_common_length, 0, sizeof(func_common_length));
 
     {
         int i = 1;
@@ -236,13 +249,13 @@ int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_li
                 switch (x_it->type & y_it->type)
                 {
                 case STATEMENT:
-                    opt[i][j] = std::max({opt[i - 1][j], opt[i][j - 1], opt[i - 1][j - 1] + LCS((uint8_t *)x_it->p, x_it->length, (uint8_t *)y_it->p, y_it->length)});
+                    func_common_length[i][j] = std::max({func_common_length[i - 1][j], func_common_length[i][j - 1], func_common_length[i - 1][j - 1] + LCS((uint8_t *)x_it->p, x_it->length, (uint8_t *)y_it->p, y_it->length)});
                     break;
                 case FUNCTION:
-                    opt[i][j] = std::max({opt[i - 1][j], opt[i][j - 1], opt[i - 1][j - 1] + GetSignatureLCS((std::forward_list<Sign> *)x_it->p, (std::forward_list<Sign> *)y_it->p)});
+                    func_common_length[i][j] = std::max({func_common_length[i - 1][j], func_common_length[i][j - 1], func_common_length[i - 1][j - 1] + GetSignatureLCS((std::forward_list<Sign> *)x_it->p, (std::forward_list<Sign> *)y_it->p)});
                     break;
                 default:
-                    opt[i][j] = opt[i - 1][j] > opt[i][j - 1] ? opt[i - 1][j] : opt[i][j - 1];
+                    func_common_length[i][j] = func_common_length[i - 1][j] > func_common_length[i][j - 1] ? func_common_length[i - 1][j] : func_common_length[i][j - 1];
                 }
                 j++;
             }
@@ -250,22 +263,52 @@ int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_li
         }
     }
 
-    int result = opt[xlen - 1][ylen - 1];
-    for (int i = 0; i < xlen; i++)
-        free(*(opt + i));
-    free(opt);
-
-    return result;
+    return func_common_length[xlen - 1][ylen - 1];
 }
 
 void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count)
 {
+    assert(count <= SIGN_SIZE);
+
     TLengthDisasm instr;
     int len;
 
+#ifdef _WIN64
+    bool after_align = false;
+    for (; count > 0; count--)
+    {
+        if (after_align && jpt_locater.isJPT((uint64_t)address))
+        {
+            address += jpt_locater.getJPTSize((uint64_t)address);
+            continue;
+        }
+
+        if (is_msvc_debug_align(address))
+        {
+            address = (uint8_t *)((((uint64_t)address >> 4) + 1) << 4);
+            after_align = true;
+            continue;
+        }
+
+        LengthDisasm(address, true, &instr);
+        if (instr.Length == 0)
+        {
+            address++;
+            continue;
+        }
+
+        if ((instr.OpcodeSize == 2 && instr.Opcode[1] == 0x1F && (instr.Flags & F_MODRM)) || instr.Opcode[0] == 0x90)
+        {
+            address += instr.Length;
+            after_align = true;
+            continue;
+        }
+        after_align = false;
+#else
     for (; count > 0; count--)
     {
         LengthDisasm(address, true, &instr);
+#endif
         len = instr.Length;
         // wrong instruction
         if (len == 0 || (instr.Opcode[0] == 0x00 && (!(instr.Flags & F_MODRM) || len != 3)))
@@ -343,10 +386,48 @@ void FunctionLocater::DelSign(std::forward_list<Sign> *signature)
 
 void FunctionLocater::GetFunctionEntry(std::unordered_set<uint8_t *> &entry_list, SectionArea &text)
 {
+    TLengthDisasm instr;
+    std::unordered_set<uint8_t *> caller_list;
+
+#ifdef _WIN64
+    bool after_align = false;
+    JPT_Locater jpt_locater;
+    uint64_t ds = (uint64_t)text.start >> 16 << 16;
+    // for (uint8_t* p = (uint8_t*)0x7FF7609B2918; p <= text.end;)
     for (uint8_t *p = text.start; p <= text.end;)
     {
-        TLengthDisasm instr;
+        if (after_align && jpt_locater.isJPT((uint64_t)p - ds))
+        {
+            p += jpt_locater.getJPTSize((uint64_t)p - ds);
+            continue;
+        }
+
+        if (is_msvc_debug_align(p))
+        {
+            p = (uint8_t *)((((uint64_t)p >> 4) + 1) << 4);
+            after_align = true;
+            continue;
+        }
+
         LengthDisasm(p, true, &instr);
+        if (instr.Length == 0)
+        {
+            p++;
+            continue;
+        }
+
+        if ((instr.OpcodeSize == 2 && instr.Opcode[1] == 0x1F && (instr.Flags & F_MODRM)) || instr.Opcode[0] == 0x90)
+        {
+            p += instr.Length;
+            after_align = true;
+            continue;
+        }
+        after_align = false;
+#else
+    for (uint8_t *p = text.start; p <= text.end;)
+    {
+        LengthDisasm(p, true, &instr);
+#endif
         uint8_t *addr = 0x0;
         if (instr.Length == 5 && instr.ImmediateDataSize == 4 && (instr.Opcode[0] == 0xe8 || instr.Opcode[0] == 0xe9))
         {
@@ -359,7 +440,15 @@ void FunctionLocater::GetFunctionEntry(std::unordered_set<uint8_t *> &entry_list
         if (addr && addr >= text.start && addr <= text.end)
         {
             entry_list.insert(addr);
+            caller_list.insert(p);
         }
+#ifdef _WIN64
+        else
+        {
+            jpt_locater.updateInstruction(p, instr);
+        }
+#endif // _WIN64
+
         p += instr.Length;
     }
 }

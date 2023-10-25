@@ -30,12 +30,17 @@
 #define NOMINMAX
 #include <Windows.h>
 #include <DbgHelp.h>
+
+#include "jpt.hpp";
+
 #elif __linux__
 #include <elf.h>
 #endif
 
 #include "LengthDisasm/LengthDisasm.h"
 
+#define SIGN_SIZE 30
+#define MAX_SINGLE_INSTR_LENGTH 15
 #define STATEMENT 1 << 0
 #define FUNCTION 1 << 1
 
@@ -62,7 +67,9 @@ public:
     };
 
 private:
-    SectionArea exe_text, exe_rodata, so_rodata;
+    static int func_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
+    static int instr_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
+    static JPT_Locater jpt_locater;
 
     /**
      * @brief   get mov/lea signature with data from pointer of instruction target register.
