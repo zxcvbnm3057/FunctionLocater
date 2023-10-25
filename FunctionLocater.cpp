@@ -31,9 +31,6 @@
 
 #include "FunctionLocater.hpp";
 
-int FunctionLocater::func_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
-int FunctionLocater::instr_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
-
 #ifdef _WIN64
 
 uint64_t JPT_Locater::ds;
@@ -217,53 +214,66 @@ void FunctionLocater::MatchFunctions(std::unordered_map<uint8_t *, std::unordere
 
 int FunctionLocater::LCS(const uint8_t *x, int xlen, const uint8_t *y, int ylen)
 {
-    memset(&instr_common_length, 0, sizeof(instr_common_length));
+    int curr[SIGN_SIZE + 1] = {0};
+    int prev = 0;
 
     for (int i = 1; i <= xlen; i++)
     {
+        prev = curr[0];
         for (int j = 1; j <= ylen; j++)
         {
+            int backup = curr[j];
             if (x[i - 1] == y[j - 1])
-                instr_common_length[i][j] = instr_common_length[i - 1][j - 1] + 1;
+                curr[j] = prev + 1;
             else
-                instr_common_length[i][j] = instr_common_length[i - 1][j] > instr_common_length[i][j - 1] ? instr_common_length[i - 1][j] : instr_common_length[i][j - 1];
+                curr[j] = std::max({curr[j], curr[j - 1]});
+            prev = backup;
         }
     }
 
-    return instr_common_length[xlen][ylen];
+    return curr[ylen];
 }
 
 int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_list<Sign> *B)
 {
     int xlen = std::distance(A->begin(), A->end()) + 1;
     int ylen = std::distance(B->begin(), B->end()) + 1;
-    memset(&func_common_length, 0, sizeof(func_common_length));
+
+    int curr[SIGN_SIZE + 1] = {0};
 
     {
+        int prev = 0;
         int i = 1;
+
         for (auto x_it = A->begin(); x_it != A->end(); x_it++)
         {
             int j = 1;
+
+            prev = curr[0];
             for (auto y_it = B->begin(); y_it != B->end(); y_it++)
             {
+                int backup = curr[j];
+
                 switch (x_it->type & y_it->type)
                 {
                 case STATEMENT:
-                    func_common_length[i][j] = std::max({func_common_length[i - 1][j], func_common_length[i][j - 1], func_common_length[i - 1][j - 1] + LCS((uint8_t *)x_it->p, x_it->length, (uint8_t *)y_it->p, y_it->length)});
+                    curr[j] = std::max({curr[j], curr[j - 1], prev + LCS((uint8_t *)x_it->p, x_it->length, (uint8_t *)y_it->p, y_it->length)});
                     break;
                 case FUNCTION:
-                    func_common_length[i][j] = std::max({func_common_length[i - 1][j], func_common_length[i][j - 1], func_common_length[i - 1][j - 1] + GetSignatureLCS((std::forward_list<Sign> *)x_it->p, (std::forward_list<Sign> *)y_it->p)});
+                    curr[j] = std::max({curr[j], curr[j - 1], prev + GetSignatureLCS((std::forward_list<Sign> *)x_it->p, (std::forward_list<Sign> *)y_it->p)});
                     break;
                 default:
-                    func_common_length[i][j] = func_common_length[i - 1][j] > func_common_length[i][j - 1] ? func_common_length[i - 1][j] : func_common_length[i][j - 1];
+                    curr[j] = std::max(curr[j], curr[j - 1]);
                 }
+
+                prev = backup;
                 j++;
             }
             i++;
         }
     }
 
-    return func_common_length[xlen - 1][ylen - 1];
+    return curr[xlen - 1];
 }
 
 void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count)

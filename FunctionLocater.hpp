@@ -31,7 +31,7 @@
 #include <Windows.h>
 #include <DbgHelp.h>
 
-#include "jpt.hpp";
+#include "jpt.hpp"
 
 #elif __linux__
 #include <elf.h>
@@ -67,8 +67,6 @@ public:
     };
 
 private:
-    static int func_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
-    static int instr_common_length[SIGN_SIZE + 1][SIGN_SIZE + 1];
     static JPT_Locater jpt_locater;
 
     /**
