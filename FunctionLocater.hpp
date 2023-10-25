@@ -111,7 +111,7 @@ public:
      *              for example: you can set origin address as first key, and target address as second key in a hook using. Just ensure the similarity value is right.
      * @attention   this is a variant of Kuhn-Munkres algorithm. Depending on your file size, this funtion might take quite a long time.
      */
-    static void MatchFunctions(std::unordered_map<uint8_t *, std::unordered_map<uint8_t *, std::pair<int, std::string>>> &data, std::unordered_map<uint8_t *, uint8_t *> &match);
+    static void MatchFunctions(std::unordered_map<uint8_t *, std::unordered_map<uint8_t *, int>> &data, std::unordered_map<uint8_t *, uint8_t *> &match);
 
     /**
      * @brief   Get <Longest Common Subsequence> of two signature
@@ -123,8 +123,9 @@ public:
      * @param   address     start address of the function
      * @param   signature   function signature return
      * @param   count       total count of instructions using to generate Signature
+     * @result              return total size of the function signature
      */
-    static void GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count);
+    static int GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count);
 
     static void DelSign(std::forward_list<Sign> *signature);
 

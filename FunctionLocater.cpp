@@ -154,7 +154,7 @@ int FunctionLocater::getLeaOrMovSignature(TLengthDisasm instr, uint8_t *mov_inst
     return mov_instr_p - mov_instr;
 }
 
-void FunctionLocater::MatchFunctions(std::unordered_map<uint8_t *, std::unordered_map<uint8_t *, std::pair<int, std::string>>> &data, std::unordered_map<uint8_t *, uint8_t *> &match)
+void FunctionLocater::MatchFunctions(std::unordered_map<uint8_t *, std::unordered_map<uint8_t *, int>> &data, std::unordered_map<uint8_t *, uint8_t *> &match)
 {
     std::unordered_map<uint8_t *, int> src_val;
     std::unordered_map<uint8_t *, int> dst_val;
@@ -182,9 +182,9 @@ void FunctionLocater::MatchFunctions(std::unordered_map<uint8_t *, std::unordere
             {
                 if (visited[src_it->first])
                     continue;
-                if (slack[src_it->first] > src_val[x] + dst_val[src_it->first] - data[x][src_it->first].first)
+                if (slack[src_it->first] > src_val[x] + dst_val[src_it->first] - data[x][src_it->first])
                 {
-                    slack[src_it->first] = src_val[x] + dst_val[src_it->first] - data[x][src_it->first].first;
+                    slack[src_it->first] = src_val[x] + dst_val[src_it->first] - data[x][src_it->first];
                     pre[src_it->first] = y;
                 }
                 if (slack[src_it->first] < d)
@@ -276,12 +276,13 @@ int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_li
     return curr[xlen - 1];
 }
 
-void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count)
+int FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count)
 {
     assert(count <= SIGN_SIZE);
 
     TLengthDisasm instr;
-    int len;
+    int sign_len = 0;
+    int instr_len;
 
 #ifdef _WIN64
     bool after_align = false;
@@ -319,14 +320,14 @@ void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<S
     {
         LengthDisasm(address, true, &instr);
 #endif
-        len = instr.Length;
+        instr_len = instr.Length;
         // wrong instruction
-        if (len == 0 || (instr.Opcode[0] == 0x00 && (!(instr.Flags & F_MODRM) || len != 3)))
+        if (instr_len == 0 || (instr.Opcode[0] == 0x00 && (!(instr.Flags & F_MODRM) || instr_len != 3)))
             break;
         // 	No Operation, just for align
         if ((instr.OpcodeSize == 2 && instr.Opcode[1] == 0x1F && (instr.Flags & F_MODRM)) || instr.Opcode[0] == 0x90)
         {
-            address += len;
+            address += instr_len;
             continue;
         }
 
@@ -340,12 +341,12 @@ void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<S
             std::forward_list<Sign> *sub_func_sign = new std::forward_list<Sign>();
             if (short_circuit)
             {
-                GetFunctionSignature((uint8_t *)addr, signature, rodata, count);
+                sign_len += GetFunctionSignature((uint8_t *)addr, signature, rodata, count);
                 break;
             }
             else
             {
-                GetFunctionSignature((uint8_t *)addr, sub_func_sign, rodata, 3);
+                sign_len += GetFunctionSignature((uint8_t *)addr, sub_func_sign, rodata, 3);
                 signature->push_front(Sign{sub_func_sign, FUNCTION, 0});
             }
         }
@@ -359,22 +360,26 @@ void FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<S
                 uint8_t *copy = (uint8_t *)malloc(sizeof(uint8_t) * sign_length);
                 memcpy(copy, mov_instr, sizeof(uint8_t) * sign_length);
                 signature->push_front(Sign{copy, STATEMENT, sign_length});
+                sign_len += sign_length;
             }
             else // normal case
             {
-                uint8_t *copy = (uint8_t *)malloc(sizeof(uint8_t) * len);
-                memcpy(copy, address, sizeof(uint8_t) * len);
-                signature->push_front(Sign{copy, STATEMENT, len});
+                uint8_t *copy = (uint8_t *)malloc(sizeof(uint8_t) * instr_len);
+                memcpy(copy, address, sizeof(uint8_t) * instr_len);
+                signature->push_front(Sign{copy, STATEMENT, instr_len});
+                sign_len += instr_len;
             }
         }
 
-        address += len;
+        address += instr_len;
 
         if ((*address == 0xC3))
         {
             break;
         }
     }
+
+    return sign_len;
 }
 
 void FunctionLocater::DelSign(std::forward_list<Sign> *signature)
