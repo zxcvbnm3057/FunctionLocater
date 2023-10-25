@@ -140,4 +140,33 @@ public:
      * @brief   Read .text and .rodata section physical address area in memory
      */
     static void GetSectionArea(char *file_path, SectionArea *text, SectionArea *rodata, uint64_t offset);
+
+#ifdef _DEBUG
+    static void DumpHex(uint8_t *data, int len, std::string indent)
+    {
+        printf("%s", indent.c_str());
+        for (int i = 0; i < len; i++)
+        {
+            printf("%02x", *(data + i));
+        }
+        printf("\n");
+    }
+
+    static void DumpSign(std::forward_list<Sign> *data, std::string indent)
+    {
+        data->reverse();
+        for (auto it = data->begin(); it != data->end(); it++)
+        {
+            switch (it->type)
+            {
+            case STATEMENT:
+                DumpHex((uint8_t *)it->p, it->length, indent);
+                break;
+            case FUNCTION:
+                DumpSign((std::forward_list<Sign> *)it->p, indent + "\t");
+                break;
+            }
+        }
+    }
+#endif
 };
