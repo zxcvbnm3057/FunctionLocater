@@ -230,7 +230,7 @@ int FunctionLocater::LCS(const uint8_t *x, int xlen, const uint8_t *y, int ylen)
         }
     }
 
-    return instr_common_length[xlen - 1][ylen - 1];
+    return instr_common_length[xlen][ylen];
 }
 
 int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_list<Sign> *B)
@@ -447,8 +447,7 @@ void FunctionLocater::GetFunctionEntry(std::unordered_set<uint8_t *> &entry_list
         {
             jpt_locater.updateInstruction(p, instr);
         }
-#endif // _WIN64
-
+#endif
         p += instr.Length;
     }
 }
