@@ -273,7 +273,7 @@ int FunctionLocater::GetSignatureLCS(std::forward_list<Sign> *A, std::forward_li
         }
     }
 
-    return curr[xlen - 1];
+    return curr[ylen - 1];
 }
 
 int FunctionLocater::GetFunctionSignature(uint8_t *address, std::forward_list<Sign> *signature, SectionArea &rodata, int count)
